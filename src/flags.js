@@ -273,15 +273,35 @@ Flags.sort = async function (flagIds, sort) {
 	return flagIds;
 };
 
-// help from ChatGPT
+// Help from chatgpt
 
 Flags.validate = async function (payload) {
-	console.log('Salman Al-Saigh');
 	const [target, reporter] = await Promise.all([
 		Flags.getTarget(payload.type, payload.id, payload.uid),
 		user.getUserData(payload.uid),
 	]);
 
+	validateTargetAndReporter(target, reporter);
+
+	const [targetPrivileged, reporterPrivileged] = await Promise.all([
+		user.isPrivileged(target.uid),
+		user.isPrivileged(reporter.uid),
+	]);
+
+	if (targetPrivileged && !reporterPrivileged) {
+		throw new Error('[[error:cant-flag-privileged]]');
+	}
+
+	if (payload.type === 'post') {
+		await validatePost(payload, reporter);
+	} else if (payload.type === 'user') {
+		await validateUser(payload, reporter);
+	} else {
+		throw new Error('[[error:invalid-data]]');
+	}
+};
+
+function validateTargetAndReporter(target, reporter) {
 	if (!target) {
 		throw new Error('[[error:invalid-data]]');
 	}
@@ -294,38 +314,65 @@ Flags.validate = async function (payload) {
 	if (reporter.banned) {
 		throw new Error('[[error:user-banned]]');
 	}
+}
 
-	const [targetPrivileged, reporterPrivileged] = await Promise.all([
-		user.isPrivileged(target.uid),
-		user.isPrivileged(reporter.uid),
-	]);
-
-	if (targetPrivileged && !reporterPrivileged) {
-		throw new Error('[[error:cant-flag-privileged]]');
+async function validatePost(payload, reporter) {
+	const editable = await privileges.posts.canEdit(payload.id, payload.uid);
+	if (!editable.flag && !meta.config['reputation:disabled'] && reporter.reputation < meta.config['min:rep:flag']) {
+		throw new Error(`[[error:not-enough-reputation-to-flag, ${meta.config['min:rep:flag']}]]`);
 	}
+}
 
-	if (payload.type === 'post') {
-		const editable = await privileges.posts.canEdit(payload.id, payload.uid);
-		if (!editable.flag && !meta.config['reputation:disabled'] && reporter.reputation < meta.config['min:rep:flag']) {
-			throw new Error(`[[error:not-enough-reputation-to-flag, ${meta.config['min:rep:flag']}]]`);
-		}
-		return;
+async function validateUser(payload, reporter) {
+	if (parseInt(payload.id, 10) === parseInt(payload.uid, 10)) {
+		throw new Error('[[error:cant-flag-self]]');
 	}
-
-	if (payload.type === 'user') {
-		if (parseInt(payload.id, 10) === parseInt(payload.uid, 10)) {
-			throw new Error('[[error:cant-flag-self]]');
-		}
-		const editable = await privileges.users.canEdit(payload.uid, payload.id);
-		if (!editable && !meta.config['reputation:disabled'] && reporter.reputation < meta.config['min:rep:flag']) {
-			throw new Error(`[[error:not-enough-reputation-to-flag, ${meta.config['min:rep:flag']}]]`);
-		}
-		return;
+	const editable = await privileges.users.canEdit(payload.uid, payload.id);
+	if (!editable && !meta.config['reputation:disabled'] && reporter.reputation < meta.config['min:rep:flag']) {
+		throw new Error(`[[error:not-enough-reputation-to-flag, ${meta.config['min:rep:flag']}]]`);
 	}
+}
 
-	throw new Error('[[error:invalid-data]]');
+
+
+Flags.getNotes = async function (flagId) {
+	let notes = await db.getSortedSetRevRangeWithScores(`flag:${flagId}:notes`, 0, -1);
+	notes = await modifyNotes(notes);
+	return notes;
 };
 
+Flags.getNote = async function (flagId, datetime) {
+	datetime = parseInt(datetime, 10);
+	if (isNaN(datetime)) {
+		throw new Error('[[error:invalid-data]]');
+	}
+
+	let notes = await db.getSortedSetRangeByScoreWithScores(`flag:${flagId}:notes`, 0, 1, datetime, datetime);
+	if (!notes.length) {
+		throw new Error('[[error:invalid-data]]');
+	}
+
+	notes = await modifyNotes(notes);
+	return notes[0];
+};
+
+Flags.getFlagIdByTarget = async function (type, id) {
+	let method;
+	switch (type) {
+		case 'post':
+			method = posts.getPostField;
+			break;
+
+		case 'user':
+			method = user.getUserField;
+			break;
+
+		default:
+			throw new Error('[[error:invalid-data]]');
+	}
+
+	return await method(id, 'flagId');
+};
 
 
 Flags.getNotes = async function (flagId) {
