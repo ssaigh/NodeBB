@@ -754,6 +754,33 @@ describe('Flags', () => {
 				done();
 			});
 		});
+
+		//ChatGPT Assisted from below this comment
+
+		it('should error out if a user tries to flag themselves', (done) => {
+			Flags.validate({
+				type: 'user',
+				id: 1,  
+				uid: 1, 
+			}, (err) => {
+				assert.ok(err);
+				assert.strictEqual('[[error:cant-flag-self]]', err.message);
+				done();
+			});
+		});
+
+
+		
+
+		
+		//Above is chatgpt assisted code above
+
+
+		
+
+
+
+
 	});
 
 	describe('.appendNote()', () => {
